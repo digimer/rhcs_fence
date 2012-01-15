@@ -390,7 +390,7 @@ sub get_local_resource_state
 		if ($status_line =~ /lock on .*?:(\d+)/)
 		{
 			my $pid=$1;
-			to_log($conf, 1, __LINE__, "Failed to read local resource state. 'drbdadm' is locked by process: [$pid].");
+			to_log($conf, 1, __LINE__, "Failed to read local resource state. 'drbdadm' is locked by process: [$pid]. Aborting.");
 		}
 	}
 	$sc->close();

@@ -1,0 +1,491 @@
+#!/usr/bin/perl
+#
+# Author:   Digimer (digimer@alteeve.com)
+# Version:  0.1
+# Released: 2012-01-11
+# License:  GPL v2+
+# 
+# This program ties Linbit's DRBD into Red Hat's RHCS's fence daemon via the 
+# 'fence_node' shell call.
+#
+# This script was modeled heavily on Lon Hohberger <lhh[a]redhat.com>'s
+# obliterate-peer.sh script.
+# 
+# Exit Codes (as per; http://osdir.com/ml/linux.kernel.drbd.devel/2006-11/msg00005.html)
+# - 3 -> peer is inconsistent
+# - 4 -> peer is outdated (this handler outdated it) [ resource fencing ]
+# - 5 -> peer was down / unreachable
+# - 6 -> peer is primary
+# - 7 -> peer got stonithed [ node fencing ]
+# This program uses;
+# - 1   = Something failed
+# - 7   = Fence succeeded
+# - 255 = End of program hit... should never happen.
+#
+# Features
+# - Clusters > 2 nodes supported, provided 
+
+
+use strict;
+use warnings;
+use IO::Handle;
+
+my $THIS_FILE="rhcs_fence";
+
+my $conf={
+	# If a program isn't at the defined path, $ENV{PATH} will be searched.
+	path	=>	{
+		cman_tool		=>	"/usr/sbin/cman_tool",
+		drbdadm			=>	"/sbin/drbdadm",
+		fence_node		=>	"/usr/sbin/fence_node",
+		logger			=>	"/usr/bin/logger",
+	},
+	# General settings.
+	sys	=>	{
+		# Set 'debug' to '1' for DEBUG output.
+		debug			=>	0,
+		# Set 'local_delay' to the number of seconds to wait before
+		# fencing the other node. If left to '0', Node with ID = 1 will
+		# have no delay and all other nodes will wait: 
+		# ((node ID * 2) + 5) seconds.
+		local_delay		=>	0,
+	},
+	# The script will set this.
+	cluster	=>	{
+		this_node		=>	"",
+	},
+	# These are the environment variables set by DRBD. See 'man drbd.conf'
+	# -> 'handlers'.
+	env	=>	{
+		# The resource triggering the fence.
+		'DRBD_RESOURCE'		=>	$ENV{DRBD_RESOURCE},
+		# The resource minor number.
+		'DRBD_MINOR'		=>	$ENV{DRBD_MINOR},
+		# This is 'ipv4' or 'ipv6'
+		'DRBD_PEER_AF'		=>	$ENV{DRBD_PEER_AF},
+		# The address of the peer(s).
+		'DRBD_PEER_ADDRESS'	=>	$ENV{DRBD_PEER_ADDRESS},
+		# The peer(s) hostname(s)
+		'DRBD_PEERS'		=>	$ENV{DRBD_PEERS},
+	},
+};
+
+# Find executables.
+find_executables($conf);
+
+# Something for the logs
+to_log($conf, 0, __LINE__, "Attempting to fence peer using RHCS from DRBD...");
+
+# Record the environment variables
+foreach my $key (keys %{$conf->{env}})
+{
+	$conf->{env}{$key}="" if not defined $conf->{env}{$key};
+	to_log($conf, 0, __LINE__, "DEBUG: Environment variable: [$key] == [$conf->{env}{$key}]") if $conf->{sys}{debug};
+}
+
+# Who am I?
+get_local_node_name($conf);
+
+# Am I up to date?
+get_local_resource_state($conf);
+
+# Who else is here?
+get_info_on_other_nodes($conf);
+
+# Who shall I kill?
+get_target($conf);
+
+# Sleep a bit to avoid a double-fence.
+sleep_a_bit($conf);
+
+# Eject the target, if I can.
+eject_target($conf);
+
+# Kill the target.
+kill_target($conf);
+
+exit(255);
+
+###############################################################################
+# Functions                                                                   #
+###############################################################################
+
+# This checks the given paths and, if something isn't found, it searches PATH
+# trying to find it.
+sub find_executables
+{
+	my ($conf)=@_;
+	
+	# Log entries can only happen if I've found 'logger', so an extra check
+	# will be made on 'to_log' calls.
+	my $bad=0;
+	my @dirs=split/:/, $ENV{PATH};
+	foreach my $exe (keys %{$conf->{path}})
+	{
+		to_log($conf, 0, __LINE__, "DEBUG: Checking if: [$exe] is at: [$conf->{path}{$exe}]") if $conf->{sys}{debug};
+		if ( not -e $conf->{path}{$exe} )
+		{
+			to_log($conf, 0, __LINE__, "DEBUG: It is not!") if $conf->{sys}{debug};
+			foreach my $path (@dirs)
+			{
+				my $check="$path/$exe";
+				$check=~s/\/\//\//g;
+				to_log($conf, 0, __LINE__, "DEBUG: Checking: [$check]") if $conf->{sys}{debug};
+				if ( -e $check )
+				{
+					to_log($conf, 0, __LINE__, "DEBUG: Found!") if $conf->{sys}{debug};
+					if (-e $conf->{path}{logger})
+					{
+						to_log($conf, 0, __LINE__, "DEBUG: Changed path for: [$exe] from: [$conf->{path}{$exe}] to: [$check]") if $conf->{sys}{debug};
+					}
+					else
+					{
+						warn "DEBUG: Changed path for: [$exe] from: [$conf->{path}{$exe}] to: [$check]\n";
+					}
+					$conf->{path}{$exe}=$check;
+					to_log($conf, 0, __LINE__, "DEBUG: Set 'path::$exe' to: [$conf->{path}{$exe}]") if $conf->{sys}{debug};
+				}
+				else
+				{
+					to_log($conf, 0, __LINE__, "DEBUG: Not found!") if $conf->{sys}{debug};
+				}
+			}
+		}
+		else
+		{
+			to_log($conf, 0, __LINE__, "DEBUG: Found!") if $conf->{sys}{debug};
+			next;
+		}
+		
+		# Make sure it exists now.
+		to_log($conf, 0, __LINE__, "DEBUG: Checking again if: [$exe] is at: [$conf->{path}{$exe}].") if $conf->{sys}{debug};
+		if ( not -e $conf->{path}{$exe} )
+		{
+			$bad=1;
+			if (-e $conf->{path}{logger})
+			{
+				to_log($conf, 0, __LINE__, "Failed to find executable: [$exe]. Unable to proceed.");
+			}
+			else
+			{
+				warn "Failed to find executable: [$exe]. Unable to proceed.\n";
+			}
+		}
+	}
+	nice_exit($conf, 1) if $bad;
+	
+	return(0);
+}
+
+# This is an artificial delay to help avoid a double-fence situation when both
+# nodes are alive, but comms failed.
+sub sleep_a_bit
+{
+	my ($conf)=@_;
+	
+	my $i_am=$conf->{sys}{this_node};
+	my $my_id=$conf->{nodes}{$i_am}{id};
+	to_log($conf, 0, __LINE__, "DEBUG: I am: [$i_am] and my id is: [$my_id]") if $conf->{sys}{debug};
+	
+	# I don't want to fail because I don't have an ID number.
+	$my_id=int(rand(10)) if not $my_id;
+	
+	# Calculate the delay.
+	my $delay=$my_id;
+	$delay=(($my_id * 2) + 5);
+	
+	# But never wait more than 30 seconds.
+	$delay=30 if $delay > 30;
+	
+	# A user value trumps all.
+	$delay=$conf->{sys}{local_delay} if $conf->{sys}{local_delay};
+	
+	# Don't wait if this is node ID 1 unless the user has defined a delay.
+	if (($my_id > 1) or ($conf->{sys}{local_delay}))
+	{
+		to_log($conf, 0, __LINE__, "Delaying for: [$delay] seconds to avoid dual-fencing...");
+		sleep $delay;
+		to_log($conf, 0, __LINE__, "DEBUG: Right then, break over.") if $conf->{sys}{debug};
+	}
+	else
+	{
+		to_log($conf, 0, __LINE__, "I am the first node, so I won't delay.");
+	}
+	
+	return(0);
+}
+
+# This kills remote node.
+sub kill_target
+{
+	my ($conf)=@_;
+	
+	# Hug it and squeeze it and call it George.
+	my $remote_node=$conf->{env}{DRBD_PEERS};
+	to_log($conf, 0, __LINE__, "Fencing target: [$remote_node]...");
+	
+	my $success=0;
+	my $sc=IO::Handle->new();
+	my $shell_call="$conf->{path}{fence_node} -v $remote_node";
+	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+	while(<$sc>)
+	{
+		chomp;
+		my $line=$_;
+		to_log($conf, 0, __LINE__, "DEBUG: $line") if $conf->{sys}{debug};
+		if ($line=~/fence .*? success/)
+		{
+			$success=1;
+		}
+		else
+		{
+			to_log($conf, 0, __LINE__, "'fence_node $remote_node' appears to have failed!") if $conf->{sys}{debug};
+			to_log($conf, 0, __LINE__, "Read: [$line]") if $conf->{sys}{debug};
+		}
+	}
+	$sc->close();
+	my $sc_exit=$?;
+	to_log($conf, 0, __LINE__, "DEBUG: Attempt to fence node: [$remote_node] exited with: [$sc_exit]") if $conf->{sys}{debug};
+
+	# Exit.
+	if (not $success)
+	{
+		to_log($conf, 1, __LINE__, "Attempt to fence: [$remote_node] failed!");
+	}
+	else
+	{
+		to_log($conf, 7, __LINE__, "Fencing of: [$remote_node] succeeded!");
+	}
+	
+	return(0);
+}
+
+# This ejects the remote node from the cluster, if cluster comms are still up.
+sub eject_target
+{
+	my ($conf)=@_;
+	
+	### I don't know if I really want to use/keep this.
+	# If the node is still a cluster member, kick it out.
+	my $remote_node=$conf->{env}{DRBD_PEERS};
+	if ($conf->{nodes}{$remote_node}{member} eq "M")
+	{
+		# It is, kick it out. If cluster comms are up, this will
+		# trigger a fence in a few moment, regardless of what we do
+		# next.
+		to_log($conf, 0, __LINE__, "Target node: [$remote_node] is a cluster member, attempting to eject.");
+		my $sc=IO::Handle->new();
+		my $shell_call="$conf->{path}{cman_tool} kill -f $remote_node";
+		to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+		open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+		while(<$sc>)
+		{
+			chomp;
+			my $line=$_;
+		}
+		$sc->close();
+		my $sc_exit=$?;
+		to_log($conf, 0, __LINE__, "DEBUG: Attempt to force-remove node: [$remote_node] exited with: [$sc_exit]") if $conf->{sys}{debug};
+	}
+	else
+	{
+		to_log($conf, 0, __LINE__, "Target node: [$remote_node] is *not* a cluster member (state: [$conf->{nodes}{$remote_node}{member}]). Not ejecting.");
+	}
+	
+	return(0);
+}
+
+# This identifies the remote node.
+sub get_target
+{
+	my ($conf)=@_;
+	
+	# Make sure I know my target.
+	my $remote_node=$conf->{env}{DRBD_PEERS};
+	if ( not exists $conf->{nodes}{$remote_node} )
+	{
+		# Try the short name.
+		$remote_node=~s/^(.*?)\..*$//;
+		if ( not exists $conf->{nodes}{$remote_node} )
+		{
+			to_log($conf, 1, __LINE__, "I didn't see the other node: [$conf->{env}{DRBD_PEERS} ($remote_node)] in cman's node list. I can't fence this node.");
+		}
+		# Update the peer.
+		$conf->{env}{DRBD_PEERS}=$remote_node;
+	}
+	to_log($conf, 0, __LINE__, "I have identified my target: [$remote_node]") if $conf->{sys}{debug};
+	
+	return(0);
+}
+
+# This uses 'cman_tool' to get the information on the other node(s) in the
+# cluster.
+sub get_info_on_other_nodes
+{
+	my ($conf)=@_;
+	
+	my $node_count=0;
+	my $sc=IO::Handle->new();
+	my $shell_call="$conf->{path}{cman_tool} -a -F id,name,type,addr nodes";
+	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+	while(<$sc>)
+	{
+		chomp;
+		my $line=$_;
+		my ($node_id, $node_name, $member, $address)=(split/ /, $line);
+		to_log($conf, 0, __LINE__, "DEBUG: id: [$node_id], name: [$node_name], member: [$member], address: [$address]") if $conf->{sys}{debug};
+		
+		$conf->{nodes}{$node_name}{member}=$member;
+		$conf->{nodes}{$node_name}{id}=$node_id;
+		$conf->{nodes}{$node_name}{address}=$address;
+		$node_count++;
+		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+	}
+	$sc->close();
+	my $sc_exit=$?;
+	to_log($conf, 0, __LINE__, "DEBUG: Attempt to gather cluster member information exited with: [$sc_exit]") if $conf->{sys}{debug};
+	
+	return(0);
+}
+
+
+# This calls drbdadm get-gi to find the current state of the resource.
+sub get_local_resource_state
+{
+	my ($conf)=@_;
+	
+	# DRBD installed from tarball uses '/usr/local/' prefix, so be flexible.
+	if ( not -e $conf->{path}{drbdadm})
+	{
+		my $old_path=$conf->{path}{drbdadm};
+		if ($conf->{path}{drbdadm} =~ /^\/usr\/local/)
+		{
+			$conf->{path}{drbdadm}=~s/^\/usr\/local//;
+		}
+		else
+		{
+			$conf->{path}{drbdadm}="/usr/local/".$conf->{path}{drbdadm};
+			$conf->{path}{drbdadm}=~s/\/\//\//g;
+		}
+		if ( not -e $conf->{path}{drbdadm} )
+		{
+			to_log($conf, 1, __LINE__, "Unable to find the 'drbdadm' executable at either: [$old_path] or: [$conf->{path}{drbdadm}]");
+		}
+	}
+	
+	to_log($conf, 1, __LINE__, "No resource defined! Unable to proceed.") if not $conf->{env}{DRBD_RESOURCE};
+	
+	my $status_line;
+	my $sc=IO::Handle->new();
+	my $shell_call="$conf->{path}{drbdadm} get-gi $conf->{env}{DRBD_RESOURCE}";
+	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+	while(<$sc>)
+	{
+		chomp;
+		$status_line=$_;
+		to_log($conf, 0, __LINE__, "DEBUG: output: $status_line") if $conf->{sys}{debug};
+		if ($status_line =~ /lock on .*?:(\d+)/)
+		{
+			my $pid=$1;
+			to_log($conf, 1, __LINE__, "Failed to read local resource state. 'drbdadm' is locked by process: [$pid].");
+		}
+	}
+	$sc->close();
+	my $sc_exit=$?;
+	to_log($conf, 0, __LINE__, "DEBUG: Attempt to collect UpToDate information on resource: [$conf->{env}{DRBD_RESOURCE}] exited with: [$sc_exit]") if $conf->{sys}{debug};
+	
+	# Example output showing what the bits mean.
+	#        +--<  Current data generation UUID  >-
+	#        |               +--<  Bitmap's base data generation UUID  >-
+	#        |               |                 +--<  younger history UUID  >-
+	#        |               |                 |         +-<  older history  >-
+	#        V               V                 V         V
+	# C3864FB60759430F:0000000000000000:A8C791FB53E8ED2B:A8C691FB53E8ED2B:1:1:1:1:0:0:0
+	#                                                                     ^ ^ ^ ^ ^ ^ ^
+	#                                       -<  Data consistency flag  >--+ | | | | | |
+	#                              -<  Data was/is currently up-to-date  >--+ | | | | |
+	#                                   -<  Node was/is currently primary  >--+ | | | |
+	#                                   -<  Node was/is currently connected  >--+ | | |
+	#          -<  Node was in the progress of setting all bits in the bitmap  >--+ | |
+	#                         -<  The peer's disk was out-dated or inconsistent  >--+ |
+	#       -<  This node was a crashed primary, and has not seen its peer since   >--+
+	# 
+	# flags: Primary, Connected, UpToDate
+	
+	# The sixth value will be 1 (UpToDate) or 0 (other).
+	($conf->{sys}{local_res_uptodate}, $conf->{sys}{local_res_was_current_primary})=($status_line=~/.*?:.*?:.*?:.*?:\d:(\d):(\d):\d:\d:\d:\d/);
+	
+	to_log($conf, 0, __LINE__, "DEBUG: UpToDate: [$conf->{sys}{local_res_uptodate}]") if $conf->{sys}{debug};
+	to_log($conf, 0, __LINE__, "DEBUG: Was Current Primary: [$conf->{sys}{local_res_was_current_primary}]") if $conf->{sys}{debug};
+	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}] is NOT 'UpToDate', will not fence peer.") if not $conf->{sys}{local_res_uptodate};
+	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}] was NOT 'Current Primary' and likely recovered from being fenced, will not fence peer.") if not $conf->{sys}{local_res_was_current_primary};
+	
+	return(0);
+}
+
+# This reads in and sets the local node's name.
+sub get_local_node_name
+{
+	my ($conf)=@_;
+	
+	my $sc=IO::Handle->new();
+	my $shell_call="$conf->{path}{cman_tool} status";
+	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+	while(<$sc>)
+	{
+		chomp;
+		my $line=$_;
+		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+		if ($line=~/Node name: (.*)/)
+		{
+			$conf->{sys}{this_node}=$1;
+			last;
+		}
+	}
+	$sc->close();
+	my $sc_exit=$?;
+	to_log($conf, 0, __LINE__, "DEBUG: Attempt to get local node name via 'cman_tool status' exited with: [$sc_exit]") if $conf->{sys}{debug};
+	
+	to_log($conf, 0, __LINE__, "DEBUG: I am: [$conf->{sys}{this_node}]") if $conf->{sys}{debug};
+	to_log($conf, 1, __LINE__, "Unable to find local node name.") if not $conf->{sys}{this_node};
+	
+	return(0);
+}
+
+# Log file entries
+sub to_log
+{
+	my ($conf, $exit, $line, $message)=@_;
+	
+	# Send a copy of this message to STDOUT if in debug mode.
+	print "$THIS_FILE $line; $message\n" if $conf->{sys}{debug};
+	
+	# I want the line number in DEBUG mode.
+	$message="$line: $message" if $conf->{sys}{debug};
+	
+	my $logger=IO::Handle->new();
+	my $sc="$conf->{path}{logger} -t $THIS_FILE -- $message";
+	open ($logger, "$sc 2>&1 |") || warn "Failed to log message: [$line:$message], error: $!\n";
+	while(<$logger>)
+	{
+		chomp;
+		# Nothing should ever be here.
+	}
+	$logger->close();
+	
+	nice_exit($conf, $exit) if $exit;
+	
+	return(0);
+}
+
+# Cleanly exit.
+sub nice_exit
+{
+	my ($conf, $code)=@_;
+	
+	exit ($code);
+}

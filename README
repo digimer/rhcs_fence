@@ -1,7 +1,7 @@
 Program: rhcs_fence
 Author:  digimer (digimer@alteeve.com)
-Date:    2012-01-14
-Version: 0.1
+Date:    2012-01-15
+Version: 0.2.1
 License: GPL v2.0+
 
 
@@ -16,6 +16,23 @@ This program was based heavily on Lon Hohberger <lhh[a]redhat.com>
 "obliterate-peer.sh" script. This was created as a replacement fence handler
 designed to add some features and intelligence to his script, but became a new
 program in order to switch to perl.
+
+
+-=] Supported Environments
+
+This script supports two-node DRBD setups only, but the nodes themselves may be
+part of a larger cluster. This script should be used when 
+'fencing resource-and-stonith' is set only. The 'on <host> { }' name *must*
+match the '<clusternode name="..."> as well.
+
+
+-=] Limitations
+
+As this handler insists on seeing the local disk as 'UpToDate' before it will
+proceed with a fence. Thus, if you have a simultaneous and complete cluster
+crash followed by the recovery of only one node, the recovered node will be in
+a 'Consistent' state, which will abort the fence call. As such, this scenario
+will recover human intervention to recover from.
 
 
 -=] Notes:
@@ -34,15 +51,14 @@ configuration section of the script. If this is a non-0 value, the script will
 pause for the defined number of seconds, ignoring the behaviour described 
 above.
 
-- Second, 'is/was primary' check;
+- Second, 'UpToDate' check;
 
-When a fence call is made, this program checks the referenced resource's 
-'is/was UpToDate' flag and 'is/was current primary' flags, as viewable using
-'drbdadm show-gi <res>'. The fence call will abort if either the local resource
-is *not* UpToDate or if it was *not* 'current primary'. The latter is unset
-when the node was fenced, and helps prevent accidentally fencing the original
-survivng node when the cluster communication is up, but the storage network is
-not.
+When a fence call is made, this program checks the referenced resource minor
+number's disk state to ensure it is 'UpToDate' as resported by '/proc/drbd'.
+The fence call will abort if the disk state is 'Consistent' (or anything else).
+This helps prevent accidentally fencing the original survivng node when the
+cluster communication is up, but the storage network is not, avoiding a 
+fence-loop.
 
 
 -=] Failure Modes:
@@ -58,7 +74,8 @@ Exit codes;
 
 If you run into any trouble, please enable 'debug' mode by setting the internal
 'debug' value to '1'. If you need help, please send the output of the syslog
-of both nodes with debug enabled to the Linux Cluster mailing list[1].
+of both nodes with debug enabled to the Linux Cluster mailing list or DRBD 
+Users mailing list.
 
 
 -=] Getting Help:
@@ -66,3 +83,4 @@ of both nodes with debug enabled to the Linux Cluster mailing list[1].
 By email:     digimer@alteeve.com / https://alteeve.com
 IRC:          #linux-cluster and #drbd on freenode.net
 Mailing list: https://www.redhat.com/mailman/listinfo/linux-cluster
+              http://lists.linbit.com/mailman/listinfo/drbd-user

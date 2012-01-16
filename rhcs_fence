@@ -36,9 +36,8 @@ my $conf={
 	# If a program isn't at the defined path, $ENV{PATH} will be searched.
 	path	=>	{
 		cman_tool		=>	"/usr/sbin/cman_tool",
-		drbdadm			=>	"/sbin/drbdadm",
 		fence_node		=>	"/usr/sbin/fence_node",
-		logger			=>	"/usr/bin/logger",
+		uname			=>	"/bin/uname",
 	},
 	# General settings.
 	sys	=>	{
@@ -49,6 +48,8 @@ my $conf={
 		# have no delay and all other nodes will wait: 
 		# ((node ID * 2) + 5) seconds.
 		local_delay		=>	0,
+		# Local host name.
+		host_name		=>	"",
 	},
 	# The script will set this.
 	cluster	=>	{
@@ -61,11 +62,7 @@ my $conf={
 		'DRBD_RESOURCE'		=>	$ENV{DRBD_RESOURCE},
 		# The resource minor number.
 		'DRBD_MINOR'		=>	$ENV{DRBD_MINOR},
-		# This is 'ipv4' or 'ipv6'
-		'DRBD_PEER_AF'		=>	$ENV{DRBD_PEER_AF},
-		# The address of the peer(s).
-		'DRBD_PEER_ADDRESS'	=>	$ENV{DRBD_PEER_ADDRESS},
-		# The peer(s) hostname(s)
+		# The peer(s) hostname(s), space separated.
 		'DRBD_PEERS'		=>	$ENV{DRBD_PEERS},
 	},
 };
@@ -120,7 +117,7 @@ sub find_executables
 	# will be made on 'to_log' calls.
 	my $bad=0;
 	my @dirs=split/:/, $ENV{PATH};
-	foreach my $exe (keys %{$conf->{path}})
+	foreach my $exe (sort {$b cmp $a} keys %{$conf->{path}})
 	{
 		to_log($conf, 0, __LINE__, "DEBUG: Checking if: [$exe] is at: [$conf->{path}{$exe}]") if $conf->{sys}{debug};
 		if ( not -e $conf->{path}{$exe} )
@@ -350,78 +347,41 @@ sub get_info_on_other_nodes
 	return(0);
 }
 
-
-# This calls drbdadm get-gi to find the current state of the resource.
+# This reads /proc/drbd and pulls out the state of the defined resource
 sub get_local_resource_state
 {
 	my ($conf)=@_;
 	
-	# DRBD installed from tarball uses '/usr/local/' prefix, so be flexible.
-	if ( not -e $conf->{path}{drbdadm})
-	{
-		my $old_path=$conf->{path}{drbdadm};
-		if ($conf->{path}{drbdadm} =~ /^\/usr\/local/)
-		{
-			$conf->{path}{drbdadm}=~s/^\/usr\/local//;
-		}
-		else
-		{
-			$conf->{path}{drbdadm}="/usr/local/".$conf->{path}{drbdadm};
-			$conf->{path}{drbdadm}=~s/\/\//\//g;
-		}
-		if ( not -e $conf->{path}{drbdadm} )
-		{
-			to_log($conf, 1, __LINE__, "Unable to find the 'drbdadm' executable at either: [$old_path] or: [$conf->{path}{drbdadm}]");
-		}
-	}
+	# Minor may well be '0', so I need to check for an empty string here.
+	to_log($conf, 0, __LINE__, "DEBUG: Checking the state of resource with minor number: [$conf->{env}{DRBD_MINOR}]") if $conf->{sys}{debug};
+	to_log($conf, 1, __LINE__, "Resource minor number not defined! Unable to proceed.") if $conf->{env}{DRBD_MINOR} eq "";
 	
-	to_log($conf, 1, __LINE__, "No resource defined! Unable to proceed.") if not $conf->{env}{DRBD_RESOURCE};
-	
-	my $status_line;
+	my $minor=$conf->{env}{DRBD_MINOR};
+	to_log($conf, 0, __LINE__, "DEBUG: minor: [$minor]") if $conf->{sys}{debug};
 	my $sc=IO::Handle->new();
-	my $shell_call="$conf->{path}{drbdadm} get-gi $conf->{env}{DRBD_RESOURCE}";
+	my $shell_call="</proc/drbd";
 	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
-	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+	open ($sc, "$shell_call") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 	while(<$sc>)
 	{
 		chomp;
-		$status_line=$_;
-		to_log($conf, 0, __LINE__, "DEBUG: output: $status_line") if $conf->{sys}{debug};
-		if ($status_line =~ /lock on .*?:(\d+)/)
+		my $line=$_;
+		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+		$line=~s/^\s+//;
+		if ($line=~/^$minor: .*? ds:(.*?)\//)
 		{
-			my $pid=$1;
-			to_log($conf, 1, __LINE__, "Failed to read local resource state. 'drbdadm' is locked by process: [$pid]. Aborting.");
+			my $state=$1;
+			to_log($conf, 0, __LINE__, "DEBUG: read state of minor: [$minor] as: [$state]") if $conf->{sys}{debug};
+			$conf->{sys}{local_res_uptodate}=$state eq "UpToDate" ? 1 : 0;
+			to_log($conf, 0, __LINE__, "DEBUG: sys::local_res_uptodate: [$conf->{sys}{local_res_uptodate}]") if $conf->{sys}{debug};
 		}
 	}
 	$sc->close();
 	my $sc_exit=$?;
-	to_log($conf, 0, __LINE__, "DEBUG: Attempt to collect UpToDate information on resource: [$conf->{env}{DRBD_RESOURCE}] exited with: [$sc_exit]") if $conf->{sys}{debug};
-	
-	# Example output showing what the bits mean.
-	#        +--<  Current data generation UUID  >-
-	#        |               +--<  Bitmap's base data generation UUID  >-
-	#        |               |                 +--<  younger history UUID  >-
-	#        |               |                 |         +-<  older history  >-
-	#        V               V                 V         V
-	# C3864FB60759430F:0000000000000000:A8C791FB53E8ED2B:A8C691FB53E8ED2B:1:1:1:1:0:0:0
-	#                                                                     ^ ^ ^ ^ ^ ^ ^
-	#                                       -<  Data consistency flag  >--+ | | | | | |
-	#                              -<  Data was/is currently up-to-date  >--+ | | | | |
-	#                                   -<  Node was/is currently primary  >--+ | | | |
-	#                                   -<  Node was/is currently connected  >--+ | | |
-	#          -<  Node was in the progress of setting all bits in the bitmap  >--+ | |
-	#                         -<  The peer's disk was out-dated or inconsistent  >--+ |
-	#       -<  This node was a crashed primary, and has not seen its peer since   >--+
-	# 
-	# flags: Primary, Connected, UpToDate
-	
-	# The sixth value will be 1 (UpToDate) or 0 (other).
-	($conf->{sys}{local_res_uptodate}, $conf->{sys}{local_res_was_current_primary})=($status_line=~/.*?:.*?:.*?:.*?:\d:(\d):(\d):\d:\d:\d:\d/);
+	to_log($conf, 0, __LINE__, "DEBUG: Attempt to collect UpToDate information device with minor: [$minor] exited with: [$sc_exit]") if $conf->{sys}{debug};
 	
 	to_log($conf, 0, __LINE__, "DEBUG: UpToDate: [$conf->{sys}{local_res_uptodate}]") if $conf->{sys}{debug};
-	to_log($conf, 0, __LINE__, "DEBUG: Was Current Primary: [$conf->{sys}{local_res_was_current_primary}]") if $conf->{sys}{debug};
-	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}] is NOT 'UpToDate', will not fence peer.") if not $conf->{sys}{local_res_uptodate};
-	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}] was NOT 'Current Primary' and likely recovered from being fenced, will not fence peer.") if not $conf->{sys}{local_res_was_current_primary};
+	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}], minor: [$minor] is NOT 'UpToDate', will not fence peer.") if not $conf->{sys}{local_res_uptodate};
 	
 	return(0);
 }
@@ -461,21 +421,34 @@ sub to_log
 {
 	my ($conf, $exit, $line, $message)=@_;
 	
-	# Send a copy of this message to STDOUT if in debug mode.
-	print "$THIS_FILE $line; $message\n" if $conf->{sys}{debug};
-	
 	# I want the line number in DEBUG mode.
-	$message="$line: $message" if $conf->{sys}{debug};
+	$message="$line; $message" if $conf->{sys}{debug};
 	
-	my $logger=IO::Handle->new();
-	my $sc="$conf->{path}{logger} -t $THIS_FILE -- $message";
-	open ($logger, "$sc 2>&1 |") || warn "Failed to log message: [$line:$message], error: $!\n";
-	while(<$logger>)
+	if (not $conf->{handle}{'log'})
 	{
-		chomp;
-		# Nothing should ever be here.
+		### Logging in here causes deep recursion, so don't.
+		# First log entry, a little setup
+		my $sc=IO::Handle->new();
+		my $shell_call="$conf->{path}{uname} -n";
+		open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
+		while(<$sc>)
+		{
+			chomp;
+			my $line=$_;
+			$conf->{sys}{host_name}=$line;
+			$conf->{sys}{host_name}=~s/^(.*?)\..*$/$1/ if $conf->{sys}{host_name} =~ /\./;
+		}
+		$sc->close();
+		my $sc_exit=$?;
+		
+		$conf->{handle}{'log'}=IO::Handle->new();
+		open ($conf->{handle}{'log'}, ">>/var/log/messages") || die "Failed to append to syslog; $!\n";
+		$conf->{handle}{'log'}->autoflush(1);
 	}
-	$logger->close();
+	
+	my $now=localtime;
+	$now=~s/^.\w+ (.*?) \d+$/$1/;
+	print {$conf->{handle}{'log'}} "$now $conf->{sys}{host_name} $THIS_FILE: $message\n";
 	
 	nice_exit($conf, $exit) if $exit;
 	
@@ -486,6 +459,8 @@ sub to_log
 sub nice_exit
 {
 	my ($conf, $code)=@_;
+	
+	$conf->{handle}{'log'}->close() if $conf->{handle}{'log'};
 	
 	exit ($code);
 }

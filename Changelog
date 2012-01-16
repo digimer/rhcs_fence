@@ -1,0 +1,8 @@
+v0.2.1
+- Changed the 'drbdadm get-gi <res>' call to instead parse '/proc/drbd' to be
+  more reliable. Also now only check for the textual 'UpToDate' to determine if
+  the script will proceed with the fence action.
+- Removed the use of 'logger' in favor of directly writing to syslog.
+
+v0.1
+- All new. Functionally similar to "obliterate-peer.sh".

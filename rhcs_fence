@@ -221,7 +221,7 @@ sub kill_target
 	my $remote_node=$conf->{env}{DRBD_PEERS};
 	to_log($conf, 0, __LINE__, "Fencing target: [$remote_node]...");
 	
-	my $success=0;
+	my $exit=1;
 	my $sc=IO::Handle->new();
 	my $shell_call="$conf->{path}{fence_node} -v $remote_node";
 	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
@@ -233,7 +233,7 @@ sub kill_target
 		to_log($conf, 0, __LINE__, "DEBUG: $line") if $conf->{sys}{debug};
 		if ($line=~/fence .*? success/)
 		{
-			$success=1;
+			$exit=0;
 		}
 		else
 		{
@@ -255,7 +255,7 @@ sub kill_target
 		to_log($conf, 7, __LINE__, "Fencing of: [$remote_node] succeeded!");
 	}
 	
-	return(0);
+	return($exit);
 }
 
 # This ejects the remote node from the cluster, if cluster comms are still up.
@@ -441,6 +441,7 @@ sub to_log
 		$sc->close();
 		my $sc_exit=$?;
 		
+		# Open a (hot) handle to syslog.
 		$conf->{handle}{'log'}=IO::Handle->new();
 		open ($conf->{handle}{'log'}, ">>/var/log/messages") || die "Failed to append to syslog; $!\n";
 		$conf->{handle}{'log'}->autoflush(1);

@@ -1,3 +1,6 @@
+v0.2.2
+- Changed kill_node()'s return to "1" unless the the fence succeeds.
+
 v0.2.1
 - Changed the 'drbdadm get-gi <res>' call to instead parse '/proc/drbd' to be
   more reliable. Also now only check for the textual 'UpToDate' to determine if

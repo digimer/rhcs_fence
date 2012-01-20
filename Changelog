@@ -1,3 +1,10 @@
+v0.2.4
+- Moved all variable declerations to the start of functions for future
+  maintainability.
+- Change to_log()'s passed-in "line" variable to "line_num" to avoid confusion
+  between the usual use of "line" as the string used to record output from
+  IO::Handle calls.
+
 v0.2.3
 - Changed the order of many 'if' statements that came after statements to the
   front of statements for consistency and maintainability reasons.

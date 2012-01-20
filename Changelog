@@ -1,3 +1,7 @@
+v0.2.3
+- Changed the order of many 'if' statements that came after statements to the
+  front of statements for consistency and maintainability reasons.
+
 v0.2.2
 - Changed kill_node()'s return to "1" unless the the fence succeeds.
 

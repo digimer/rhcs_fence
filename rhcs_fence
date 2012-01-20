@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Author:   Digimer (digimer@alteeve.com)
-# Version:  0.1
+# Version:  0.2.3
 # Released: 2012-01-11
 # License:  GPL v2+
 # 
@@ -76,8 +76,8 @@ to_log($conf, 0, __LINE__, "Attempting to fence peer using RHCS from DRBD...");
 # Record the environment variables
 foreach my $key (keys %{$conf->{env}})
 {
-	$conf->{env}{$key}="" if not defined $conf->{env}{$key};
-	to_log($conf, 0, __LINE__, "DEBUG: Environment variable: [$key] == [$conf->{env}{$key}]") if $conf->{sys}{debug};
+	if (not defined $conf->{env}{$key}) { $conf->{env}{$key}=""; }
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Environment variable: [$key] == [$conf->{env}{$key}]"); }
 }
 
 # Who am I?
@@ -119,49 +119,49 @@ sub find_executables
 	my @dirs=split/:/, $ENV{PATH};
 	foreach my $exe (sort {$b cmp $a} keys %{$conf->{path}})
 	{
-		to_log($conf, 0, __LINE__, "DEBUG: Checking if: [$exe] is at: [$conf->{path}{$exe}]") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Checking if: [$exe] is at: [$conf->{path}{$exe}]"); }
 		if ( not -e $conf->{path}{$exe} )
 		{
-			to_log($conf, 0, __LINE__, "DEBUG: It is not!") if $conf->{sys}{debug};
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: It is not!"); }
 			foreach my $path (@dirs)
 			{
 				my $check="$path/$exe";
 				$check=~s/\/\//\//g;
-				to_log($conf, 0, __LINE__, "DEBUG: Checking: [$check]") if $conf->{sys}{debug};
+				if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Checking: [$check]"); }
 				if ( -e $check )
 				{
-					to_log($conf, 0, __LINE__, "DEBUG: Found!") if $conf->{sys}{debug};
+					if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Found!"); }
 					if (-e $conf->{path}{logger})
 					{
-						to_log($conf, 0, __LINE__, "DEBUG: Changed path for: [$exe] from: [$conf->{path}{$exe}] to: [$check]") if $conf->{sys}{debug};
+						if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Changed path for: [$exe] from: [$conf->{path}{$exe}] to: [$check]"); }
 					}
 					else
 					{
 						warn "DEBUG: Changed path for: [$exe] from: [$conf->{path}{$exe}] to: [$check]\n";
 					}
 					$conf->{path}{$exe}=$check;
-					to_log($conf, 0, __LINE__, "DEBUG: Set 'path::$exe' to: [$conf->{path}{$exe}]") if $conf->{sys}{debug};
+					if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Set 'path::$exe' to: [$conf->{path}{$exe}]"); }
 				}
 				else
 				{
-					to_log($conf, 0, __LINE__, "DEBUG: Not found!") if $conf->{sys}{debug};
+					if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Not found!"); }
 				}
 			}
 		}
 		else
 		{
-			to_log($conf, 0, __LINE__, "DEBUG: Found!") if $conf->{sys}{debug};
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Found!"); }
 			next;
 		}
 		
 		# Make sure it exists now.
-		to_log($conf, 0, __LINE__, "DEBUG: Checking again if: [$exe] is at: [$conf->{path}{$exe}].") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Checking again if: [$exe] is at: [$conf->{path}{$exe}]."); }
 		if ( not -e $conf->{path}{$exe} )
 		{
 			$bad=1;
 			if (-e $conf->{path}{logger})
 			{
-				to_log($conf, 0, __LINE__, "Failed to find executable: [$exe]. Unable to proceed.");
+				if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Failed to find executable: [$exe]. Unable to proceed."); }
 			}
 			else
 			{
@@ -169,7 +169,7 @@ sub find_executables
 			}
 		}
 	}
-	nice_exit($conf, 1) if $bad;
+	if ($bad) { nice_exit($conf, 1); }
 	
 	return(0);
 }
@@ -182,31 +182,40 @@ sub sleep_a_bit
 	
 	my $i_am=$conf->{sys}{this_node};
 	my $my_id=$conf->{nodes}{$i_am}{id};
-	to_log($conf, 0, __LINE__, "DEBUG: I am: [$i_am] and my id is: [$my_id]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: I am: [$i_am] and my id is: [$my_id]"); }
 	
 	# I don't want to fail because I don't have an ID number.
-	$my_id=int(rand(10)) if not $my_id;
+	if (not $my_id)
+	{
+		$my_id=int(rand(10));
+	}
 	
 	# Calculate the delay.
 	my $delay=$my_id;
 	$delay=(($my_id * 2) + 5);
 	
 	# But never wait more than 30 seconds.
-	$delay=30 if $delay > 30;
+	if ($delay > 30)
+	{
+		$delay=30;
+	}
 	
 	# A user value trumps all.
-	$delay=$conf->{sys}{local_delay} if $conf->{sys}{local_delay};
+	if ($conf->{sys}{local_delay})
+	{
+		$delay=$conf->{sys}{local_delay};
+	}
 	
 	# Don't wait if this is node ID 1 unless the user has defined a delay.
 	if (($my_id > 1) or ($conf->{sys}{local_delay}))
 	{
-		to_log($conf, 0, __LINE__, "Delaying for: [$delay] seconds to avoid dual-fencing...");
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Delaying for: [$delay] seconds to avoid dual-fencing..."); }
 		sleep $delay;
-		to_log($conf, 0, __LINE__, "DEBUG: Right then, break over.") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Right then, break over."); }
 	}
 	else
 	{
-		to_log($conf, 0, __LINE__, "I am the first node, so I won't delay.");
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "I am the first node, so I won't delay."); }
 	}
 	
 	return(0);
@@ -219,40 +228,40 @@ sub kill_target
 	
 	# Hug it and squeeze it and call it George.
 	my $remote_node=$conf->{env}{DRBD_PEERS};
-	to_log($conf, 0, __LINE__, "Fencing target: [$remote_node]...");
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Fencing target: [$remote_node]..."); }
 	
 	my $exit=1;
 	my $sc=IO::Handle->new();
 	my $shell_call="$conf->{path}{fence_node} -v $remote_node";
-	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]"); }
 	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 	while(<$sc>)
 	{
 		chomp;
 		my $line=$_;
-		to_log($conf, 0, __LINE__, "DEBUG: $line") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: $line"); }
 		if ($line=~/fence .*? success/)
 		{
 			$exit=0;
 		}
 		else
 		{
-			to_log($conf, 0, __LINE__, "'fence_node $remote_node' appears to have failed!") if $conf->{sys}{debug};
-			to_log($conf, 0, __LINE__, "Read: [$line]") if $conf->{sys}{debug};
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "'fence_node $remote_node' appears to have failed!"); }
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Read: [$line]"); }
 		}
 	}
 	$sc->close();
 	my $sc_exit=$?;
-	to_log($conf, 0, __LINE__, "DEBUG: Attempt to fence node: [$remote_node] exited with: [$sc_exit]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Attempt to fence node: [$remote_node] exited with: [$sc_exit]"); }
 
 	# Exit.
-	if (not $success)
+	if (not $exit)
 	{
-		to_log($conf, 1, __LINE__, "Attempt to fence: [$remote_node] failed!");
+		if ($conf->{sys}{debug}) { to_log($conf, 1, __LINE__, "Attempt to fence: [$remote_node] failed!"); }
 	}
 	else
 	{
-		to_log($conf, 7, __LINE__, "Fencing of: [$remote_node] succeeded!");
+		if ($conf->{sys}{debug}) { to_log($conf, 7, __LINE__, "Fencing of: [$remote_node] succeeded!"); }
 	}
 	
 	return($exit);
@@ -271,10 +280,10 @@ sub eject_target
 		# It is, kick it out. If cluster comms are up, this will
 		# trigger a fence in a few moment, regardless of what we do
 		# next.
-		to_log($conf, 0, __LINE__, "Target node: [$remote_node] is a cluster member, attempting to eject.");
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Target node: [$remote_node] is a cluster member, attempting to eject."); }
 		my $sc=IO::Handle->new();
 		my $shell_call="$conf->{path}{cman_tool} kill -f $remote_node";
-		to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]"); }
 		open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 		while(<$sc>)
 		{
@@ -283,11 +292,11 @@ sub eject_target
 		}
 		$sc->close();
 		my $sc_exit=$?;
-		to_log($conf, 0, __LINE__, "DEBUG: Attempt to force-remove node: [$remote_node] exited with: [$sc_exit]") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Attempt to force-remove node: [$remote_node] exited with: [$sc_exit]"); }
 	}
 	else
 	{
-		to_log($conf, 0, __LINE__, "Target node: [$remote_node] is *not* a cluster member (state: [$conf->{nodes}{$remote_node}{member}]). Not ejecting.");
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "Target node: [$remote_node] is *not* a cluster member (state: [$conf->{nodes}{$remote_node}{member}]). Not ejecting."); }
 	}
 	
 	return(0);
@@ -306,12 +315,12 @@ sub get_target
 		$remote_node=~s/^(.*?)\..*$//;
 		if ( not exists $conf->{nodes}{$remote_node} )
 		{
-			to_log($conf, 1, __LINE__, "I didn't see the other node: [$conf->{env}{DRBD_PEERS} ($remote_node)] in cman's node list. I can't fence this node.");
+			if ($conf->{sys}{debug}) { to_log($conf, 1, __LINE__, "I didn't see the other node: [$conf->{env}{DRBD_PEERS} ($remote_node)] in cman's node list. I can't fence this node."); }
 		}
 		# Update the peer.
 		$conf->{env}{DRBD_PEERS}=$remote_node;
 	}
-	to_log($conf, 0, __LINE__, "I have identified my target: [$remote_node]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "I have identified my target: [$remote_node]"); }
 	
 	return(0);
 }
@@ -325,24 +334,24 @@ sub get_info_on_other_nodes
 	my $node_count=0;
 	my $sc=IO::Handle->new();
 	my $shell_call="$conf->{path}{cman_tool} -a -F id,name,type,addr nodes";
-	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]"); }
 	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 	while(<$sc>)
 	{
 		chomp;
 		my $line=$_;
 		my ($node_id, $node_name, $member, $address)=(split/ /, $line);
-		to_log($conf, 0, __LINE__, "DEBUG: id: [$node_id], name: [$node_name], member: [$member], address: [$address]") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: id: [$node_id], name: [$node_name], member: [$member], address: [$address]"); }
 		
 		$conf->{nodes}{$node_name}{member}=$member;
 		$conf->{nodes}{$node_name}{id}=$node_id;
 		$conf->{nodes}{$node_name}{address}=$address;
 		$node_count++;
-		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: output: $line"); }
 	}
 	$sc->close();
 	my $sc_exit=$?;
-	to_log($conf, 0, __LINE__, "DEBUG: Attempt to gather cluster member information exited with: [$sc_exit]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Attempt to gather cluster member information exited with: [$sc_exit]"); }
 	
 	return(0);
 }
@@ -353,35 +362,41 @@ sub get_local_resource_state
 	my ($conf)=@_;
 	
 	# Minor may well be '0', so I need to check for an empty string here.
-	to_log($conf, 0, __LINE__, "DEBUG: Checking the state of resource with minor number: [$conf->{env}{DRBD_MINOR}]") if $conf->{sys}{debug};
-	to_log($conf, 1, __LINE__, "Resource minor number not defined! Unable to proceed.") if $conf->{env}{DRBD_MINOR} eq "";
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Checking the state of resource with minor number: [$conf->{env}{DRBD_MINOR}]"); }
+	if ($conf->{env}{DRBD_MINOR} eq "")
+	{
+		to_log($conf, 1, __LINE__, "Resource minor number not defined! Unable to proceed.");
+	}
 	
 	my $minor=$conf->{env}{DRBD_MINOR};
-	to_log($conf, 0, __LINE__, "DEBUG: minor: [$minor]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: minor: [$minor]"); }
 	my $sc=IO::Handle->new();
 	my $shell_call="</proc/drbd";
-	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]"); }
 	open ($sc, "$shell_call") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 	while(<$sc>)
 	{
 		chomp;
 		my $line=$_;
-		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: output: $line"); }
 		$line=~s/^\s+//;
 		if ($line=~/^$minor: .*? ds:(.*?)\//)
 		{
 			my $state=$1;
-			to_log($conf, 0, __LINE__, "DEBUG: read state of minor: [$minor] as: [$state]") if $conf->{sys}{debug};
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: read state of minor: [$minor] as: [$state]"); }
 			$conf->{sys}{local_res_uptodate}=$state eq "UpToDate" ? 1 : 0;
-			to_log($conf, 0, __LINE__, "DEBUG: sys::local_res_uptodate: [$conf->{sys}{local_res_uptodate}]") if $conf->{sys}{debug};
+			if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: sys::local_res_uptodate: [$conf->{sys}{local_res_uptodate}]"); }
 		}
 	}
 	$sc->close();
 	my $sc_exit=$?;
-	to_log($conf, 0, __LINE__, "DEBUG: Attempt to collect UpToDate information device with minor: [$minor] exited with: [$sc_exit]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Attempt to collect UpToDate information device with minor: [$minor] exited with: [$sc_exit]"); }
 	
-	to_log($conf, 0, __LINE__, "DEBUG: UpToDate: [$conf->{sys}{local_res_uptodate}]") if $conf->{sys}{debug};
-	to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}], minor: [$minor] is NOT 'UpToDate', will not fence peer.") if not $conf->{sys}{local_res_uptodate};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: UpToDate: [$conf->{sys}{local_res_uptodate}]"); }
+	if (not $conf->{sys}{local_res_uptodate})
+	{
+		to_log($conf, 1, __LINE__, "Local resource: [$conf->{env}{DRBD_RESOURCE}], minor: [$minor] is NOT 'UpToDate', will not fence peer.");
+	}
 	
 	return(0);
 }
@@ -393,13 +408,13 @@ sub get_local_node_name
 	
 	my $sc=IO::Handle->new();
 	my $shell_call="$conf->{path}{cman_tool} status";
-	to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: shell call: [$shell_call]"); }
 	open ($sc, "$shell_call 2>&1 |") or to_log($conf, 1, __LINE__, "Failed to call: [$sc], error was: $!");
 	while(<$sc>)
 	{
 		chomp;
 		my $line=$_;
-		to_log($conf, 0, __LINE__, "DEBUG: output: $line") if $conf->{sys}{debug};
+		if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: output: $line"); }
 		if ($line=~/Node name: (.*)/)
 		{
 			$conf->{sys}{this_node}=$1;
@@ -408,10 +423,13 @@ sub get_local_node_name
 	}
 	$sc->close();
 	my $sc_exit=$?;
-	to_log($conf, 0, __LINE__, "DEBUG: Attempt to get local node name via 'cman_tool status' exited with: [$sc_exit]") if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: Attempt to get local node name via 'cman_tool status' exited with: [$sc_exit]"); }
 	
-	to_log($conf, 0, __LINE__, "DEBUG: I am: [$conf->{sys}{this_node}]") if $conf->{sys}{debug};
-	to_log($conf, 1, __LINE__, "Unable to find local node name.") if not $conf->{sys}{this_node};
+	if ($conf->{sys}{debug}) { to_log($conf, 0, __LINE__, "DEBUG: I am: [$conf->{sys}{this_node}]"); }
+	if (not $conf->{sys}{this_node})
+	{
+		to_log($conf, 1, __LINE__, "Unable to find local node name.");
+	}
 	
 	return(0);
 }
@@ -422,7 +440,7 @@ sub to_log
 	my ($conf, $exit, $line, $message)=@_;
 	
 	# I want the line number in DEBUG mode.
-	$message="$line; $message" if $conf->{sys}{debug};
+	if ($conf->{sys}{debug}) { $message="$line; $message"; }
 	
 	if (not $conf->{handle}{'log'})
 	{
@@ -436,7 +454,10 @@ sub to_log
 			chomp;
 			my $line=$_;
 			$conf->{sys}{host_name}=$line;
-			$conf->{sys}{host_name}=~s/^(.*?)\..*$/$1/ if $conf->{sys}{host_name} =~ /\./;
+			if ($conf->{sys}{host_name} =~ /\./)
+			{
+				$conf->{sys}{host_name}=~s/^(.*?)\..*$/$1/;
+			}
 		}
 		$sc->close();
 		my $sc_exit=$?;
@@ -451,7 +472,10 @@ sub to_log
 	$now=~s/^.\w+ (.*?) \d+$/$1/;
 	print {$conf->{handle}{'log'}} "$now $conf->{sys}{host_name} $THIS_FILE: $message\n";
 	
-	nice_exit($conf, $exit) if $exit;
+	if ($exit)
+	{
+		nice_exit($conf, $exit);
+	}
 	
 	return(0);
 }
@@ -461,7 +485,10 @@ sub nice_exit
 {
 	my ($conf, $code)=@_;
 	
-	$conf->{handle}{'log'}->close() if $conf->{handle}{'log'};
+	if ($conf->{handle}{'log'})
+	{
+		$conf->{handle}{'log'}->close();
+	}
 	
 	exit ($code);
 }

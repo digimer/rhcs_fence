@@ -1,3 +1,6 @@
+v0.2.6
+- Added support for DRBD 8.4.x volumes
+
 v0.2.5
 - Fixed a bug where successful fence actions where exiting improperly, causing
   DRBD to think the fence had actually failed.

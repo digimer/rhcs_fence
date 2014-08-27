@@ -1,3 +1,9 @@
+v0.2.8
+- Changes provided principally by Philipp Reisner (philipp.reisner@linbit.com)
+  to make fence calls smarter by helping to avoid multiple simultaneous fence
+  calls.
+- Logging changed to use Sys::Syslog.
+
 v0.2.7
 - Added support for DRBD 8.4.x volumes. Credit to Matt Willsher
   (https://github.com/mattwillsher) for this patch.

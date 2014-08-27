@@ -33,9 +33,9 @@ use IO::Handle;
 use Data::Dumper;
 use Sys::Syslog qw(:standard :macros);
 
-my $THIS_FILE="rhcs_fence";
+my $THIS_FILE = "rhcs_fence";
 
-my $conf={
+my $conf = {
 	# If a program isn't at the defined path, $ENV{PATH} will be searched.
 	path	=>	{
 		cman_tool		=>	"/usr/sbin/cman_tool",
@@ -82,7 +82,7 @@ to_log(LOG_INFO(), $conf, __LINE__, "Attempting to fence peer using RHCS from DR
 # Record the environment variables
 foreach my $key (keys %{$conf->{env}})
 {
-	if (not defined $conf->{env}{$key}) { $conf->{env}{$key}=""; }
+	if (not defined $conf->{env}{$key}) { $conf->{env}{$key} = ""; }
 	to_log(LOG_DEBUG(), $conf, __LINE__, "DEBUG: Environment variable: [$key] == [$conf->{env}{$key}]");
 }
 

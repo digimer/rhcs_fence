@@ -521,7 +521,7 @@ sub to_log
 	if ($conf->{sys}{debug}) 
 	{
 		$message = "$line_num; $message";
-		$level   = LOG_INFO() if ($level = LOG_DEBUG());
+		$level   = LOG_INFO() if ($level == LOG_DEBUG());
 	}
 	if (not $conf->{sys}{log_opened})
 	{

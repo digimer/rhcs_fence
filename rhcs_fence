@@ -2,15 +2,13 @@
 #
 # Author:   Digimer (digimer@alteeve.ca)
 #           Alteeve's Niche! - https://alteeve.ca/w/
-# Date:     2014-08-27
-# Version:  0.2.8
+# Date:     2015-09-08
+# Version:  0.2.9
 # License:  GPL v2+
 #
-# This program ties Linbit's DRBD into Red Hat's RHCS's fence daemon via the
-# 'fence_node' shell call.
+# This program ties LINBIT's DRBD into Red Hat's RHCS's fence daemon via the 'fence_node' shell call.
 #
-# This script was modeled heavily on Lon Hohberger <lhh[a]redhat.com>'s
-# obliterate-peer.sh script.
+# This script was modeled heavily on Lon Hohberger <lhh[a]redhat.com>'s obliterate-peer.sh script.
 #
 # Exit Codes (as per; http://osdir.com/ml/linux.kernel.drbd.devel/2006-11/msg00005.html)
 # - 3 -> peer is inconsistent
@@ -521,7 +519,7 @@ sub to_log
 	if ($conf->{sys}{debug}) 
 	{
 		$message = "$line_num; $message";
-		$level   = LOG_INFO() if ($level = LOG_DEBUG());
+		$level   = LOG_INFO() if ($level == LOG_DEBUG());
 	}
 	if (not $conf->{sys}{log_opened})
 	{
